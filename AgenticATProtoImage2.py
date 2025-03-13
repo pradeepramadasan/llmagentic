@@ -587,7 +587,20 @@ def process_reply_workflow():
         else:
             try:
                 agent_reply_json = json.loads(raw_agent_reply)
+                
+                # 1. First check for directly available fields
                 reply_text = agent_reply_json.get("formatted_message", "")
+                
+                # 2. Check for nested structured_response (new fix)
+                if not reply_text and "structured_response" in agent_reply_json:
+                    structured_resp = agent_reply_json.get("structured_response", {})
+                    if isinstance(structured_resp, dict):
+                        # Check for rewritten_reply in structured_response
+                        reply_text = structured_resp.get("rewritten_reply", "")
+                        if reply_text:
+                            print(f"Using 'structured_response.rewritten_reply' field for reply: {reply_text}")
+                
+                # 3. If still not found, try alternative fields
                 if not reply_text:
                     # Check for alternative fields in priority order
                     for field in ["final_reply", "reply", "analyzed_reply", "message", "text", "content"]:
@@ -641,6 +654,14 @@ def process_reply_workflow():
         
         # First check for formatted_message (default field)
         edited_reply = edited_reply_json.get("formatted_message", "")
+        
+        # Check for structured_response (new fix)
+        if not edited_reply and "structured_response" in edited_reply_json:
+            structured_resp = edited_reply_json.get("structured_response", {})
+            if isinstance(structured_resp, dict):
+                edited_reply = structured_resp.get("rewritten_reply", "")
+                if edited_reply:
+                    print(f"Using 'structured_response.rewritten_reply' for edited reply: {edited_reply}")
         
         # If not found, try these alternative fields in priority order
         if not edited_reply:
@@ -704,6 +725,13 @@ def process_reply_workflow():
                     try:
                         user_edited_json = json.loads(user_edited_content)
                         user_edited_reply = user_edited_json.get("formatted_message", "")
+                        
+                        # Check for structured_response in user edited reply
+                        if not user_edited_reply and "structured_response" in user_edited_json:
+                            structured_resp = user_edited_json.get("structured_response", {})
+                            if isinstance(structured_resp, dict):
+                                user_edited_reply = structured_resp.get("rewritten_reply", "")
+                        
                         if not user_edited_reply:
                             # Try alternative fields for the user-edited reply too
                             for field in ["final_reply", "reply", "message", "text", "content"]:
@@ -755,7 +783,6 @@ def process_reply_workflow():
     else:
         print("Error posting reply:", post_result["message"])
         return f"Error: {post_result['message']}"
-
 # Helper function to extract reply text from raw content
 def extract_reply_text_from_raw(raw_text):
     """Extract meaningful reply text from raw response that might contain JSON-like structure"""
