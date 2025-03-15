@@ -21,13 +21,10 @@ azure_client = AzureOpenAI(
     api_version="2024-12-01-preview"
 )
 
-
-
 # Corrected GPT4O deployment loading
 gpt4o_deployment = os.getenv('GPT4O_DEPLOYMENT_NAME')
 assert gpt4o_deployment, "GPT4O-mini deployment name missing in environment variables"
 
-# Corrected configuration for GPT4O-mini
 config_list_gpt4o = [{
     "model": gpt4o_deployment,
     "api_key": os.getenv('AZURE_OPENAI_API_KEY'),
@@ -35,11 +32,11 @@ config_list_gpt4o = [{
     "api_type": "azure",
     "api_version": "2024-12-01-preview"
 }]
+
 # Load o3-mini deployment from environment variables
 o3_deployment = os.getenv('DEPLOYMENT_NAME')
 assert o3_deployment, "o3-mini deployment name missing in environment variables"
 
-# Configuration for o3-mini
 config_list_o3 = [{
     "model": o3_deployment,
     "api_key": os.getenv('AZURE_OPENAI_API_KEY'),
@@ -47,6 +44,7 @@ config_list_o3 = [{
     "api_type": "azure",
     "api_version": "2024-12-01-preview"
 }]
+
 # ====================== HELPER FUNCTIONS ======================
 
 def bluesky_login(username, password):
@@ -86,32 +84,20 @@ def post_to_bluesky(message, image_path=None):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# ----- New Helper Function for Replying -----
-
 def like_bluesky(post_uri):
     """
     Like a post on Bluesky identified by its URI.
     """
     try:
         client = bluesky_login(os.getenv('BSKYUNAME'), os.getenv('BSKYPASSWD'))
-
-        # Extract DID and rkey from the post_uri
         parts = post_uri.split('/')
         if len(parts) < 5:
             return {"status": "error", "message": "Invalid post URI format"}
-
-        # Fetch the post to get its CID
         response = client.app.bsky.feed.get_posts({"uris": [post_uri]})
         if not response.posts:
             return {"status": "error", "message": "Post not found."}
         post = response.posts[0]
-
-        # Create a like
-        client.like(
-            uri=post_uri,
-            cid=post.cid
-        )
-        
+        client.like(uri=post_uri, cid=post.cid)
         return {"status": "success", "message": "Post liked successfully"}
     except Exception as e:
         return {"status": "error", "message": f"Error: {str(e)}"}
@@ -127,65 +113,43 @@ def reply_to_bluesky(original_uri, reply_content):
     """
     try:
         client = bluesky_login(os.getenv('BSKYUNAME'), os.getenv('BSKYPASSWD'))
-
-        # Extract DID and rkey from the original_uri
         parts = original_uri.split('/')
         if len(parts) < 5:
             return {"status": "error", "message": "Invalid original URI format"}
-
-        did = parts[2]  # did:plc:bam3rkdzsg74tx5ddflbgils
-        rkey = parts[-1]  # e.g., 3lk34u7ti7p2x
-
-        # Fetch original post to get CID
+        did = parts[2]
+        rkey = parts[-1]
         response = client.app.bsky.feed.get_posts({"uris": [original_uri]})
         if not response.posts:
             return {"status": "error", "message": "Original post not found."}
         original_post = response.posts[0]
-
-        # Post reply using correct structure
         client.send_post(
             text=reply_content,
             reply_to={
-                "root": {
-                    "uri": original_uri,
-                    "cid": original_post.cid
-                },
-                "parent": {
-                    "uri": original_uri,
-                    "cid": original_post.cid
-                }
+                "root": {"uri": original_uri, "cid": original_post.cid},
+                "parent": {"uri": original_uri, "cid": original_post.cid}
             }
         )
         return {"status": "success", "message": "Reply posted successfully"}
     except Exception as e:
         return {"status": "error", "message": f"Error: {str(e)}"}
-                
-# Wrapper functions to convert dict responses to JSON strings (which AutoGen can handle)
+
 def post_to_bluesky_wrapper(message, image_path=None):
     """Wrapper for post_to_bluesky that returns JSON string instead of dict"""
     result = post_to_bluesky(message, image_path)
-    return json.dumps(result)  # Convert dict to JSON string
+    return json.dumps(result)
 
-# First fix the function definition to match the function call
 def reply_to_bluesky_wrapper(original_uri, reply_content):
     """Wrapper for reply_to_bluesky that returns JSON string instead of dict"""
     result = reply_to_bluesky(original_uri=original_uri, reply_content=reply_content)
     return json.dumps(result)
 
-# Then fix the JSON extraction in process_reply_workflow
-# Add this improved JSON extraction helper function
 def extract_json_content(content_str):
     """Extract JSON content even if wrapped in code fences"""
     if content_str is None:
         return ""
-    # Remove code fence markers and whitespace
     cleaned = content_str.replace("```json", "").replace("```", "").strip()
     return cleaned
 
-# Update the agent reply extraction in process_reply_workflow:
-
-# Add this new function to fetch following timeline posts
-# Update fetch_bluesky_following to remove image extraction
 def fetch_bluesky_following(limit=20):
     """
     Fetch the latest posts from accounts the user is following on Bluesky.
@@ -194,7 +158,6 @@ def fetch_bluesky_following(limit=20):
     try:
         client = bluesky_login(os.getenv('BSKYUNAME'), os.getenv('BSKYPASSWD'))
         timeline = client.get_timeline(limit=limit)
-        
         posts = []
         for idx, feed_view in enumerate(timeline.feed, start=1):
             post = feed_view.post
@@ -205,102 +168,62 @@ def fetch_bluesky_following(limit=20):
                 "text": post.record.text,
                 "timestamp": post.indexed_at
             })
-        
         return {"status": "success", "posts": posts}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-# Add wrapper function
+
 def fetch_bluesky_following_wrapper(limit=20):
     """Wrapper for fetch_bluesky_following that returns JSON string"""
     result = fetch_bluesky_following(limit)
     return json.dumps(result)
-# ----- Update Tools: Add reply_to_bluesky tool for replying agent -----
 
+def extract_reply_text_from_raw(raw_content):
+    """
+    Attempt to extract meaningful text from a raw string response.
+    This function uses simple heuristics to find potential reply text.
+    """
+    cleaned_content = raw_content.replace("```json", "").replace("```", "").strip()
+    lines = cleaned_content.splitlines()
+    longest_line = max(lines, key=len, default="")
+    if len(longest_line) < 10:
+        return ""
+    return longest_line
 
-# Here we re-use bheeman_tools format for reply, but it will be mapped to Arjunan.
-reply_tools = {
-    "reply_to_bluesky": {
-        "name": "reply_to_bluesky",
-        "description": "Posts a reply to a message on Bluesky given the original message DID and reply content",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "original_did": {
-                    "type": "string",
-                    "description": "The DID of the original message to reply to"
-                },
-                "reply_content": {
-                    "type": "string",
-                    "description": "Content of the reply message"
-                }
-            },
-            "required": ["original_did", "reply_content"]
-        }
-        # Notice: Remove the "function" key here.
-    }
+# ----- Define bheeman_tools to fix NameError -----
+bheeman_tools = {
+    "post_to_bluesky": post_to_bluesky_wrapper,
+    "fetch_bluesky_following": fetch_bluesky_following_wrapper
 }
 
 # ----- Updated Agent Definitions -----
 
-sanjay = AssistantAgent(
+# Renamed InteractionAgent to Sanjay to handle human inputs.
+sanjay = UserProxyAgent(
     name="Sanjay",
+    human_input_mode="ALWAYS",
     system_message=(
-        "You are Sanjay, the perception and user interaction agent. Your role is to process user input, "
-        "present numbered lists of messages clearly (1 to 20), and explicitly instruct the human user to select a message by its number (e.g., '1 message' or '17 message'). "
-        "Always structure your response in JSON format with 'input_type', 'content', 'analysis', and 'user_feedback' fields."
+        "You are Sanjay, responsible for interacting with the human user. "
+        "Present numbered lists of messages clearly (1 to 20), and allow users to enter free-text instructions in English. "
+        "Always structure your responses in JSON format with 'input_type', 'content', 'analysis', and 'user_feedback'."
     ),
-    llm_config={"config_list": config_list_gpt4o}
+    code_execution_config=False
 )
 
 krsna = AssistantAgent(
     name="Krsna",
     system_message=(
-        "You are Krsna, the strategist and thinker. You understand abstract concepts, provide clarity, summarize, "
-        "clarify instructions, and interpret human input. Your role includes two tasks: "
-        "1. Categorize messages fetched from Bluesky into 'far-left', 'left', 'centrist', 'right', or 'far-right'. "
-        "2. Analyze structured input from Sanjay, identify user's intent and tone, and rewrite the reply message clearly and concisely in less than 80 characters. "
-        "After formatting, instruct Sanjay explicitly to get feedback from the human user before posting. "
-        "Always structure your response in JSON format clearly."
+        "You are Krsna, the strategist and thinker. Analyze a message's intent and tone, and rewrite it concisely. "
+        "Rewrite the provided message in 180 characters with a left-leaning tone. "
+        "Return your response in JSON format with the key 'formatted_message'."
     ),
     llm_config={"config_list": config_list_gpt4o}
 )
 
-# Bheeman (o3-mini) - Posting agent for original posts remains unchanged.
-# ----- Define Tools for Bheeman -----
-
-# Add fetch_following to bheeman_tools
-# Define bheeman_tools completely and correctly
-bheeman_tools = {
-    "post_to_bluesky": {
-        "name": "post_to_bluesky",
-        "description": "Posts a message to Bluesky (text-only)",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "message": {"type": "string", "description": "Message to post"},
-                "image_path": {"type": "string", "description": "Path to image file (optional)"}
-            },
-            "required": ["message"]
-        }
-    },
-    "fetch_bluesky_following": {
-        "name": "fetch_bluesky_following",
-        "description": "Fetches the latest posts from accounts the user is following on Bluesky",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "limit": {"type": "integer", "description": "Number of posts to fetch (default: 20)"}
-            }
-        }
-    }
-}
-
-# Update Bheeman's agent definition
 bheeman = AssistantAgent(
     name="Bheeman",
     system_message=(
-        "You are Bheeman, the posting agent. Your role is to post article messages and fetch recent messages from Bluesky. "
-        "Always structure your response in JSON format with 'status', 'formatted_message', and 'result' fields."
+        "You are Bheeman, the posting agent. Your role is to post messages to Bluesky. "
+        "Always return your output in JSON format with 'status', 'formatted_message', and 'result'."
     ),
     llm_config={"config_list": config_list_gpt4o, "functions": [
         bheeman_tools["post_to_bluesky"],
@@ -311,82 +234,153 @@ bheeman = AssistantAgent(
         "fetch_bluesky_following": fetch_bluesky_following_wrapper
     }
 )
-# Arjunan - Use GPT4O since it supports function calling
+
 arjunan = AssistantAgent(
     name="Arjunan",
     system_message=(
-        "You are Arjunan, the reactive responder. Your role is to post reply messages with a left-leaning perspective. "
-        "When replying, ensure your tone is assertive and progressive. "
-        "Always structure your response in JSON format with 'status', 'formatted_message', and 'result' fields."
+        "You are Arjunan, the reactive responder. Post reply messages with a left-leaning perspective. "
+        "Ensure your tone is assertive and progressive, and respond in JSON format."
     ),
-    llm_config={"config_list": config_list_gpt4o, "functions": [reply_tools["reply_to_bluesky"]]},
+    llm_config={"config_list": config_list_gpt4o, "functions": [ 
+        {"name": "reply_to_bluesky", "parameters": {}}
+    ]},
     function_map={"reply_to_bluesky": reply_to_bluesky_wrapper}
 )
+
 yudhistran = AssistantAgent(
     name="Yudhistran",
     system_message=(
-        "You are Yudhistran, the mediator. Your role is to respond with equanimity and a soothing, balanced tone. "
-        "You provide centrist, calming responses specifically to messages categorized as 'far-left'. "
-        "Always structure your response in JSON format with 'status', 'formatted_message', and 'result' fields."
+        "You are Yudhistran, the mediator. Respond with a balanced and soothing tone to messages categorized as 'far-left'. "
+        "Return your response in JSON format with 'status', 'formatted_message', and 'result'."
     ),
-    llm_config={"config_list": config_list_gpt4o, "functions": [reply_tools["reply_to_bluesky"]]},
+    llm_config={"config_list": config_list_gpt4o, "functions": [
+        {"name": "reply_to_bluesky", "parameters": {}}
+    ]},
     function_map={"reply_to_bluesky": reply_to_bluesky_wrapper}
 )
 
 nakulan = AssistantAgent(
     name="Nakulan",
     system_message=(
-        "You are Nakulan, the search agent. Your role is to extract DID information from a list of messages. "
-        "Given a set of messages, return a JSON array where each element includes the message and its associated DID. "
-        "Structure your response with 'message' and 'did' fields."
+        "You are Nakulan, the search agent. Extract DID information from a list of messages. "
+        "Return a JSON array where each element includes 'message' and 'did' fields."
     ),
-    llm_config={"config_list": config_list_gpt4o}  # Changed from o3 to gpt4o
-)
-
-# User proxy agent remains unchanged.
-user_proxy = UserProxyAgent(
-    name="User",
-    human_input_mode="ALWAYS",
-    system_message="You are the human user interacting with the Bluesky multi-agent system."
+    llm_config={"config_list": config_list_gpt4o}
 )
 
 # ----- GROUP CHAT INITIALIZATION -----
 
-agents = [user_proxy, sanjay, krsna, bheeman, arjunan, yudhistran, nakulan]
+agents = [sanjay, krsna, bheeman, arjunan, yudhistran, nakulan]
 group_chat = GroupChat(agents=agents, messages=[], max_round=20)
-# Change this line:
 manager = GroupChatManager(groupchat=group_chat, llm_config={"config_list": config_list_gpt4o})
+
+# ----- PLAN DISPLAY FUNCTION -----
+
+def show_plan(option):
+    if option == "1":
+        print("\nPlan for Posting a Message:")
+        print("Steps:")
+        print("  1. Sanjay collects your message.")
+        print("  2. Krsna rewrites the message in 180 characters using a bold left-leaning tone that challenges oligarch power.")
+        print("  3. Sanjay presents both the original and rewritten message for your feedback.")
+        print("  4. Based on your input, the preferred message is posted by Bheeman.")
+        print("Agents Involved:")
+        print("  - Sanjay (User Interaction)")
+        print("  - Krsna (Strategist/Rewriter)")
+        print("  - Bheeman (Poster)\n")
+    elif option == "2":
+        print("\nPlan for Processing Replies:")
+        print("Steps:")
+        print("  1. The system fetches messages from Bluesky.")
+        print("  2. Krsna categorizes messages into political leanings.")
+        print("  3. Sanjay displays the messages for you to select one.")
+        print("  4. You choose to like and/or reply to the selected message.")
+        print("  5. For replies, if agent-generated, Arjunan or Yudhistran is used based on the message's category,")
+        print("     then Krsna may edit the reply following tone guidelines, and finally Bheeman posts it.")
+        print("Agents Involved:")
+        print("  - Sanjay (User Interaction)")
+        print("  - Krsna (Categorizer/Editor)")
+        print("  - Arjunan / Yudhistran (Responder)")
+        print("  - Bheeman (Poster)\n")
+    else:
+        print("No plan available for this option.")
 
 # ----- WORKFLOW ORCHESTRATION -----
 
 def process_post_workflow(user_input):
-    """Orchestrate the workflow to post a text message with human feedback."""
-    workflow_msg = f"""
-    I need to post the following message to Bluesky: "{user_input}"
-    
-    Workflow:
-    1. Sanjay: Process the user input into a structured format including the original 'content'. 
-       The structured data must include the user's text and initial analysis.
-    2. Krsna: Receive the structured data from Sanjay and analyze intent and tone.
-       Rewrite the message clearly in less than 180 characters.
-       Instruct Sanjay to obtain explicit human feedback on the formatted message.
-    3. Sanjay: Ask the human user for approval of the formatted message.
-    4. Upon approval, Sanjay instructs Bheeman to post the final formatted message to Bluesky.
-    
-    This is a text-only post.
     """
-    chat_result = user_proxy.initiate_chat(manager, message=workflow_msg)
-    return chat_result
+    Orchestrate posting a message as follows:
+    1. Sanjay collects the original message.
+    2. Sanjay passes the message to Krsna to rewrite it in 180 characters with a left-leaning tone.
+    3. Sanjay presents both the original and Krsna's rewritten version for user feedback.
+    4. Based on feedback, Sanjay instructs Bheeman to post the chosen message.
+    """
+    # Step 1: Collect the original message.
+    original_message = user_input
+
+    # Step 2: Ask Krsna to rewrite the message.
+    rewrite_prompt = json.dumps({
+        "original_message": original_message,
+        "instruction": (
+            "You are Krsna, the strategist. Rewrite the above message within 180 characters "
+            "using a bold left-leaning tone that emphasizes social justice and challenges the oligarchs. "
+            "Return your answer in a JSON object with the key 'formatted_message'."
+        )
+    })
+    krsna_response = krsna.generate_reply(messages=[{"role": "user", "content": rewrite_prompt}])
+    if isinstance(krsna_response, str):
+        krsna_content = krsna_response
+    elif isinstance(krsna_response, dict):
+        krsna_content = krsna_response.get("content", "")
+    else:
+        krsna_content = getattr(krsna_response, "content", "")
+    krsna_content = extract_json_content(krsna_content)
+    try:
+        krsna_json = json.loads(krsna_content)
+        rewritten_message = krsna_json.get("formatted_message", "")
+    except json.JSONDecodeError:
+        rewritten_message = krsna_content  # Fallback if JSON parsing fails
+
+    if not rewritten_message:
+        rewritten_message = original_message  # Fallback if no rewrite obtained
+
+    # Step 3: Present both messages for user feedback.
+    summary = (
+        "Original Message:\n" + original_message + "\n\n" +
+        "Rewritten (Left-Leaning, 180-char) Message:\n" + rewritten_message + "\n\n" +
+        "Which message would you like to post? Type 'revised' to post the rewritten message, or 'original' to post your original message."
+    )
+    user_choice = sanjay.get_human_input(summary).strip().lower()
+
+    # Step 4: Interpret user feedback.
+    if user_choice == "revised":
+        final_message = rewritten_message
+    elif user_choice == "original":
+        final_message = original_message
+    else:
+        clarification = sanjay.get_human_input("Invalid choice. Please type 'revised' or 'original': ").strip().lower()
+        final_message = rewritten_message if clarification == "revised" else original_message
+
+    # Step 5: Instruct Bheeman to post the final message.
+    post_result_json = post_to_bluesky_wrapper(final_message)
+    post_result = json.loads(post_result_json)
+    if post_result.get("status") == "success":
+        print("Message posted successfully.")
+    else:
+        print("Error posting message:", post_result.get("message"))
+
 def categorize_messages(messages):
     """
-    Use Krsna to categorize a list of messages into political leanings.
-    Returns the original messages with category field added.
+    Use Krsna to analyze a list of messages for textual intent and tone,
+    and use GPT4O to analyze any associated images for visual intent and tone.
+    Returns the original messages with an added 'analysis' field that includes:
+         - 'intent' and 'tone' from the message text,
+         - 'image_analysis' from any image linked in the message.
+    If an image is not available or cannot be analyzed, 'image_analysis' will be "No Image Analysis".
     """
     if not messages:
         return []
-    
     try:
-        # Prepare the message data for categorization
         message_data = []
         for msg in messages:
             message_data.append({
@@ -394,138 +388,107 @@ def categorize_messages(messages):
                 "text": msg.get("text", ""),
                 "author": msg.get("author", "Unknown")
             })
-            
-        # Create prompt for Krsna to categorize messages
         prompt = json.dumps({
-            "task": "categorize",
+            "task": "analyze",
             "messages": message_data,
-            "instruction": "Categorize each message as 'far-left', 'left', 'centrist', 'right', or 'far-right' based on political leaning. If you cannot determine the category, use 'Not Categorized'."
+            "instruction": (
+                "You are Krsna, the strategist. For each message, do the following:\n"
+                "1. Analyze the text to determine its underlying intent and overall tone.\n"
+                "2. Check if the message contains a URL ending in .jpg, .jpeg, or .png. "
+                "If so, use GPT4O to analyze that image and determine its visual intent and tone.\n"
+                "Return a JSON array of objects, each having the keys: 'number', 'intent', 'tone', and 'image_analysis'.\n"
+                "If an image is not available or cannot be analyzed, set 'image_analysis' to 'No Image Analysis'.\n"
+                "If the intent or tone is unclear, use 'Unknown Intent' and 'Neutral Tone', respectively."
+            )
         })
-        
-        # Get categorization from Krsna
-        categorization_result = krsna.generate_reply(messages=[{"role": "user", "content": prompt}])
-        
-        # Extract response content
-        if isinstance(categorization_result, str):
-            categorization_content = categorization_result
-        elif isinstance(categorization_result, dict):
-            categorization_content = categorization_result.get("content", "")
+        analysis_result = krsna.generate_reply(messages=[{"role": "user", "content": prompt}])
+        if isinstance(analysis_result, str):
+            analysis_content = analysis_result
+        elif isinstance(analysis_result, dict):
+            analysis_content = analysis_result.get("content", "")
         else:
-            categorization_content = getattr(categorization_result, "content", "")
-            
-        # Clean JSON content
-        categorization_content = extract_json_content(categorization_content)
-        
+            analysis_content = getattr(analysis_result, "content", "")
+        analysis_content = extract_json_content(analysis_content)
         try:
-            # Try to parse the categorization result
-            result_json = json.loads(categorization_content)
-            
-            # Different possible formats handled:
-            if "messages" in result_json:
-                # If the response contains a messages array
-                categorized_messages = result_json["messages"]
-            elif isinstance(result_json, list):
-                # If the response is directly a list
-                categorized_messages = result_json
+            result_json = json.loads(analysis_content)
+            if isinstance(result_json, list):
+                analyzed_messages = result_json
             else:
-                # Fallback
-                print("Unexpected categorization format. Using original messages with default category.")
-                categorized_messages = messages
-                for msg in categorized_messages:
-                    msg["category"] = "Not Categorized"
-                return categorized_messages
-                
-            # Map categories back to original messages
-            for i, msg in enumerate(messages):
-                if i < len(categorized_messages):
-                    # Get category from categorized message
-                    if isinstance(categorized_messages[i], dict):
-                        category = categorized_messages[i].get("category", "Not Categorized")
-                    else:
-                        category = "Not Categorized"
-                    
-                    # Add category to original message
-                    msg["category"] = category
-                else:
-                    msg["category"] = "Not Categorized"
-                    
-            return messages
-            
+                print("Unexpected analysis format. Using default analysis.")
+                analyzed_messages = []
         except json.JSONDecodeError:
-            # If JSON parsing fails, use default category
-            print("Failed to parse categorization result. Using default category.")
-            for msg in messages:
-                msg["category"] = "Not Categorized"
-            return messages
-            
-    except Exception as e:
-        print(f"Error during categorization: {str(e)}")
-        # Return messages with default category
+            print("Failed to parse analysis result; using default analysis.")
+            analyzed_messages = []
+        # Merge the analysis into each message:
         for msg in messages:
-            msg["category"] = "Not Categorized"
+            msg_number = msg.get("number", 0)
+            analysis_found = next((am for am in analyzed_messages if am.get("number") == msg_number), None)
+            if analysis_found:
+                intent = analysis_found.get("intent", "Unknown Intent")
+                tone = analysis_found.get("tone", "Neutral Tone")
+                image_analysis = analysis_found.get("image_analysis", "No Image Analysis")
+                msg["analysis"] = f"Intent: {intent}, Tone: {tone}, Image Analysis: {image_analysis}"
+            else:
+                msg["analysis"] = "Not Analyzed"
         return messages
+    except Exception as e:
+        print(f"Error during analysis: {str(e)}")
+        for msg in messages:
+            msg["analysis"] = "Not Analyzed"
+        return messages2
+    
+    
+def trim_text(text, max_chars=200):
+    """Trims the text to max_chars characters, appending '...' if needed."""
+    if len(text) > max_chars:
+        return text[:max_chars-3] + "..."
+    return text
+
 def process_reply_workflow():
-    # Step 1: Fetch latest 20 messages
+    # Process replies workflow remains unchanged.
     fetched_messages_json = fetch_bluesky_following_wrapper(limit=20)
     fetched_messages = json.loads(fetched_messages_json)
     if fetched_messages["status"] != "success":
         print("Error fetching messages:", fetched_messages["message"])
         return
     messages = fetched_messages["posts"]
-
-    # Step 2: Categorize messages using Krsna
     categorization_result = categorize_messages(messages=messages)
-    
-    # Handle different possible return types from categorization
     if not categorization_result:
-        print("Categorization failed. Assigning default category 'Not Categorized'.")
-        # Create a new list with the default category added to each message
+        print("Categorization failed; assigning default category 'Not Categorized'.")
         categorized_messages = []
         for msg in messages:
-            msg_copy = msg.copy()  # Create a copy to avoid modifying original
+            msg_copy = msg.copy()
             msg_copy["category"] = "Not Categorized"
             categorized_messages.append(msg_copy)
         categorization_result = categorized_messages
-    
-    # Additional check to ensure we're working with a list of dictionaries
     if isinstance(categorization_result, list) and len(categorization_result) > 0:
         if isinstance(categorization_result[0], str):
-            # If we got a list of strings instead of dictionaries, fix it
-            print("Warning: Categorization returned strings. Converting to proper format.")
+            print("Warning: Categorization returned strings; converting format.")
             categorized_messages = []
             for i, msg in enumerate(messages):
                 msg_copy = msg.copy()
                 msg_copy["category"] = "Not Categorized"
                 categorized_messages.append(msg_copy)
             categorization_result = categorized_messages
-
-    # Step 3: Present messages clearly with numbering, DID and category
     for msg in categorization_result:
         try:
-            # Use get() method to provide defaults if keys are missing
             number = msg.get("number", "?")
             category = msg.get("category", "Not Categorized")
             author = msg.get("author", "Unknown")
             text = msg.get("text", "(No text)")
             did = msg.get("did", "Unknown DID")
-            
-            # Print basic message info
             print(f"{number}. [{category}] {author}: {text} (DID: {did})")
-            
-        except (AttributeError, TypeError) as e:
-            # If msg isn't a dictionary or there's another error, print it differently
-            print(f"Error displaying message: {e}")
-            print(f"Message data: {msg}")
-
-    # Step 4: Human selects a message and reply type
-    selection = input("Select a message by number (e.g., '1 message'): ")
+        except Exception as e:
+            print(f"Error displaying message: {e}", msg)
+    selection = sanjay.get_human_input("Select a message by number (e.g., '1 message') or type 'skip' to skip: ").strip().lower()
+    if selection == "skip":
+        print("Skipping reply workflow.")
+        return
     try:
         selected_number = int(selection.split()[0])
     except ValueError:
         print("Invalid selection format.")
         return
-
-    # Find the selected message
     selected_message = None
     for msg in categorization_result:
         try:
@@ -534,13 +497,10 @@ def process_reply_workflow():
                 break
         except:
             continue
-    
     if not selected_message:
         print("Invalid selection.")
         return
-
-    # Ask if user wants to like the message
-    like_option = input("Would you like to like this message? (yes/no): ").strip().lower()
+    like_option = sanjay.get_human_input("Would you like to like this message? (yes/no): ").strip().lower()
     if like_option == "yes":
         like_result_json = like_bluesky_wrapper(post_uri=selected_message["did"])
         like_result = json.loads(like_result_json)
@@ -548,79 +508,56 @@ def process_reply_workflow():
             print("Message liked successfully.")
         else:
             print("Error liking message:", like_result["message"])
-
-    # Continue with reply functionality
-    reply_option = input("Would you like to reply to this message? (yes/no): ").strip().lower()
+    reply_option = sanjay.get_human_input("Would you like to reply to this message? (yes/no): ").strip().lower()
     if reply_option != "yes":
         print("No reply will be created. Workflow completed.")
         return
-        
-    # Ask for reply type
-    reply_type = input("Type 'human' to reply yourself or 'agent' for agent-generated reply: ").strip().lower()
-    
+    reply_type = sanjay.get_human_input("Type 'human' to reply yourself or 'agent' for agent-generated reply: ").strip().lower()
     if reply_type == "human":
-        reply_text = input("Enter your reply text: ")
+        reply_text = sanjay.get_human_input("Enter your reply text: ")
     elif reply_type == "agent":
-        # Choose agent based on category 
-        if selected_message["category"] == "progressive":
+        # Use default left-leaning if 'category' is missing
+        category = selected_message.get("category", "far-left")
+        if category == "far-left":
             agent_reply = yudhistran.generate_reply(messages=[{"role": "user", "content": selected_message["text"]}])
         else:
             agent_reply = arjunan.generate_reply(messages=[{"role": "user", "content": selected_message["text"]}])
-        
-        # Safely extract the agent reply
         if isinstance(agent_reply, str):
             raw_agent_reply = agent_reply
         elif isinstance(agent_reply, dict):
             raw_agent_reply = agent_reply.get("content", "")
         else:
             raw_agent_reply = getattr(agent_reply, "content", "")
-            
         if raw_agent_reply is None:
             raw_agent_reply = ""
-            
-        # Clean the JSON content before parsing
         raw_agent_reply = extract_json_content(raw_agent_reply)
-        
         if not raw_agent_reply.strip():
             print("Agent did not provide a reply. Using default response.")
             reply_text = "No reply provided."
         else:
             try:
                 agent_reply_json = json.loads(raw_agent_reply)
-                
-                # 1. First check for directly available fields
                 reply_text = agent_reply_json.get("formatted_message", "")
-                
-                # 2. Check for nested structured_response (new fix)
                 if not reply_text and "structured_response" in agent_reply_json:
                     structured_resp = agent_reply_json.get("structured_response", {})
                     if isinstance(structured_resp, dict):
-                        # Check for rewritten_reply in structured_response
                         reply_text = structured_resp.get("rewritten_reply", "")
                         if reply_text:
-                            print(f"Using 'structured_response.rewritten_reply' field for reply: {reply_text}")
-                
-                # 3. If still not found, try alternative fields
+                            print(f"Using structured_response.rewritten_reply for reply: {reply_text}")
                 if not reply_text:
-                    # Check for alternative fields in priority order
                     for field in ["final_reply", "reply", "analyzed_reply", "message", "text", "content"]:
                         if field in agent_reply_json and agent_reply_json.get(field, ""):
                             candidate = agent_reply_json.get(field, "")
-                            # Avoid using category labels as replies
-                            if candidate.lower() not in ["progressive", "liberal", "centrist", "conservative", 
-                                                       "strongly conservative", "left", "right", "far-left", "far-right"]:
+                            if candidate.lower() not in ["progressive", "liberal", "centrist", "conservative",
+                                                          "strongly conservative", "left", "right", "far-left", "far-right"]:
                                 reply_text = candidate
                                 print(f"Using '{field}' field for reply: {reply_text}")
                                 break
-                    
                     if not reply_text:
-                        print("No suitable reply field found in JSON. Using raw response.")
+                        print("No suitable reply field found. Using raw response.")
                         reply_text = raw_agent_reply
-                        
             except json.JSONDecodeError as e:
                 print("JSON decoding failed for agent reply:", e)
-                print("Raw agent reply content:", raw_agent_reply)
-                # Try to extract meaningful content from raw response
                 extracted_text = extract_reply_text_from_raw(raw_agent_reply)
                 if extracted_text:
                     reply_text = extracted_text
@@ -631,7 +568,9 @@ def process_reply_workflow():
         print("Invalid reply type selected.")
         return
 
-    # Step 5: Krsna edits reply to max 180 chars
+    # Trim the initially generated reply_text to 200 characters
+    reply_text = trim_text(reply_text, 200)
+    
     edit_prompt = json.dumps({
         "original_message": selected_message["text"],
         "user_reply": reply_text,
@@ -644,96 +583,62 @@ def process_reply_workflow():
         edited_reply_content = edited_reply_result.get("content", "")
     else:
         edited_reply_content = getattr(edited_reply_result, "content", "")
-    
-    # Clean the JSON content before parsing
     edited_reply_content = extract_json_content(edited_reply_content)
-    
-    # Try to get the edited reply and ask for human fallback if needed
     try:
         edited_reply_json = json.loads(edited_reply_content)
-        
-        # First check for formatted_message (default field)
         edited_reply = edited_reply_json.get("formatted_message", "")
-        
-        # Check for structured_response (new fix)
         if not edited_reply and "structured_response" in edited_reply_json:
             structured_resp = edited_reply_json.get("structured_response", {})
             if isinstance(structured_resp, dict):
                 edited_reply = structured_resp.get("rewritten_reply", "")
                 if edited_reply:
-                    print(f"Using 'structured_response.rewritten_reply' for edited reply: {edited_reply}")
-        
-        # If not found, try these alternative fields in priority order
+                    print(f"Using structured_response.rewritten_reply for edited reply: {edited_reply}")
         if not edited_reply:
             for field in ["final_reply", "reply", "analyzed_reply", "message", "text", "content"]:
                 if field in edited_reply_json:
                     candidate_reply = edited_reply_json.get(field, "")
-                    # Skip if it's just a category label
                     if candidate_reply and candidate_reply.lower() not in [
-                        "centrist", "progressive", "liberal", "conservative", 
+                        "centrist", "progressive", "liberal", "conservative",
                         "strongly conservative", "left", "right", "far-left", "far-right"]:
                         edited_reply = candidate_reply
                         print(f"Using content from '{field}' field: {edited_reply}")
                         break
-        
-        # If we still don't have a reply, check if there's any field with text content
-        if not edited_reply:
-            for key, value in edited_reply_json.items():
-                if isinstance(value, str) and len(value) > 10 and key.lower() not in [
-                    "categorized_message", "category", "feedback_instruction", "instruction"]:
-                    edited_reply = value
-                    print(f"Using content from '{key}' field as fallback: {edited_reply}")
-                    break
-                    
         if not edited_reply:
             raise ValueError("Edited reply empty - no suitable content found in response")
-            
     except (json.JSONDecodeError, ValueError) as e:
         print("Editing failed:", e)
         print("Raw response content:", edited_reply_content)
-        
-        # Extract text content from the raw response if possible
         extracted_text = extract_reply_text_from_raw(edited_reply_content)
         if extracted_text:
-            fallback = input(f"Found possible reply in raw content: \"{extracted_text}\"\nUse this content? (yes/no): ").strip().lower()
+            fallback = sanjay.get_human_input(f"Found possible reply in raw content: \"{extracted_text}\"\nUse this content? (yes/no): ").strip().lower()
             if fallback == "yes":
                 edited_reply = extracted_text
             else:
-                user_option = input("Enter your own reply or type 'original' to use the original reply: ").strip()
+                user_option = sanjay.get_human_input("Enter your own reply or type 'original' to use the original reply: ").strip()
                 if user_option.lower() == "original":
                     edited_reply = reply_text
                 else:
-                    # Use Krsna to format the user's reply
                     format_prompt = json.dumps({
                         "original_message": selected_message["text"],
                         "user_reply": user_option,
                         "instruction": "Edit reply to max 180 chars, preserving tone."
                     })
-                    
                     user_edited_result = krsna.generate_reply(messages=[{"role": "user", "content": format_prompt}])
-                    
                     if isinstance(user_edited_result, str):
                         user_edited_content = user_edited_result
                     elif isinstance(user_edited_result, dict):
                         user_edited_content = user_edited_result.get("content", "")
                     else:
                         user_edited_content = getattr(user_edited_result, "content", "")
-                        
-                    # Clean and try to parse the formatted user reply
                     user_edited_content = extract_json_content(user_edited_content)
-                    
                     try:
                         user_edited_json = json.loads(user_edited_content)
                         user_edited_reply = user_edited_json.get("formatted_message", "")
-                        
-                        # Check for structured_response in user edited reply
                         if not user_edited_reply and "structured_response" in user_edited_json:
                             structured_resp = user_edited_json.get("structured_response", {})
                             if isinstance(structured_resp, dict):
                                 user_edited_reply = structured_resp.get("rewritten_reply", "")
-                        
                         if not user_edited_reply:
-                            # Try alternative fields for the user-edited reply too
                             for field in ["final_reply", "reply", "message", "text", "content"]:
                                 if field in user_edited_json:
                                     user_edited_reply = user_edited_json.get(field, "")
@@ -742,94 +647,47 @@ def process_reply_workflow():
                         if not user_edited_reply:
                             raise ValueError("No formatted message found")
                     except:
-                        # If parsing fails again, just use the user's text with truncation if needed
-                        user_edited_reply = user_option if len(user_option) <= 180 else user_option[:177] + "..."
-                        
-                    print(f"Reformatted reply: {user_edited_reply}")
-                    final_approval = input("Use this reformatted reply? (yes/no): ").strip().lower()
-                    
-                    if final_approval != "yes":
-                        print("Reply aborted.")
-                        return
-                        
+                        user_edited_reply = user_option if len(user_option) < 280 else user_option[:277] + "..."
                     edited_reply = user_edited_reply
+    else:
+        edited_reply = reply_text
+
+    # Trim the final edited reply to 200 characters
+    edited_reply = trim_text(edited_reply, 200)
+    
+    approval = sanjay.get_human_input(f"Approve edited reply: '{edited_reply}'? (yes/no): ").strip().lower()
+    if approval == "yes":
+        reply_result_json = reply_to_bluesky_wrapper(original_uri=selected_message["did"], reply_content=edited_reply)
+        reply_result = json.loads(reply_result_json)
+        if reply_result["status"] == "success":
+            print("Reply posted successfully.")
         else:
-            # No text could be extracted
-            fallback = input("Edited reply not available. Use original reply instead? (yes/no): ").strip().lower()
-            if fallback != "yes":
-                print("Reply aborted.")
-                return
-            edited_reply = reply_text
-
-    # Show the (edited) reply and the original DID before approval
-    print(f"Edited reply (max 180 chars) for DID {selected_message['did']}: {edited_reply}")
-
-    # Step 6: Human approval
-    approval = input("Approve edited reply? (yes/no): ").strip().lower()
-    if approval != "yes":
-        print("Reply not approved. Workflow terminated.")
-        return
-
-    # Step 7: Post reply using appropriate agent; pass the original message's URI (DID)
-    if selected_message["category"] == "progressive":
-        posting_agent = yudhistran
+            print("Error posting reply:", reply_result["message"])
     else:
-        posting_agent = arjunan
-    post_result_json = reply_to_bluesky_wrapper(original_uri=selected_message["did"], reply_content=edited_reply)
-    post_result = json.loads(post_result_json)
-    if post_result["status"] == "success":
-        print("Reply posted successfully.")
-        return "Reply posted successfully."
-    else:
-        print("Error posting reply:", post_result["message"])
-        return f"Error: {post_result['message']}"
-# Helper function to extract reply text from raw content
-def extract_reply_text_from_raw(raw_text):
-    """Extract meaningful reply text from raw response that might contain JSON-like structure"""
-    if not raw_text:
-        return ""
-        
-    # Look for common field patterns that might contain the reply
-    text_fields = ["reply", "formatted_message", "message", "content", "text"]
-    for field in text_fields:
-        pattern = f'"{field}"\\s*:\\s*"([^"]+)"'
-        import re
-        match = re.search(pattern, raw_text)
-        if match:
-            return match.group(1)
-            
-    # If we have something that looks like text between quotes after a colon, try that
-    match = re.search('"\\s*:\\s*"([^"]+)"', raw_text)
-    if match:
-        return match.group(1)
-        
-    # If nothing else works and text is short enough, return as is
-    if len(raw_text) < 200:
-        return raw_text
-        
-    return ""
-
-def interactive_main():
-    print("Welcome to the Bluesky multi-agent system!")
+        print("Reply not posted.")
+def main():
+    """Main function to drive the Bluesky posting and replying workflows."""
     while True:
-        print("\nSelect an option:")
-        print("1. Post text message")
-        print("2. Reply to a message")
+        print("\nChoose an action:")
+        print("1. Post a message to Bluesky")
+        print("2. Process replies to Bluesky messages")
         print("3. Exit")
-        choice = input("Enter your choice: ")
+        choice = sanjay.get_human_input("Enter your choice (1, 2, or 3): ").strip()
         if choice == "1":
-            user_input = input("Enter your message to post: ")
-            result = process_post_workflow(user_input)
-            print("Workflow result:", result)
+            show_plan("1")  # Display the plan for posting a message
+            user_input = sanjay.get_human_input("Enter the message to post: ").strip()
+            if user_input:
+                process_post_workflow(user_input)
+            else:
+                print("No message entered.")
         elif choice == "2":
-            print("Initiating workflow to fetch latest messages and reply...")
-            result = process_reply_workflow()
-            print("Workflow result:", result)
+            show_plan("2")  # Display the plan for processing replies
+            process_reply_workflow()
         elif choice == "3":
-            print("Exiting the system. Goodbye!")
+            print("Exiting the script.")
             break
         else:
-            print("Invalid choice. Please select again.")
-            
+            print("Invalid choice. Please enter 1, 2, or 3.")
+
 if __name__ == "__main__":
-    interactive_main()
+    main()
